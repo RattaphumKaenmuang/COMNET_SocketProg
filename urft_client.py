@@ -17,8 +17,11 @@ if not os.path.isfile(filePath):
     print(f"File {filePath} doesn't exist")
     exit(1)
 
+fileName = os.path.basename(filePath)
+
 with open(filePath, 'rb') as file:
     fileContent = file.read()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.sendto(fileName.encode("utf-8"), (serverIP, serverPort))
 sock.sendto(fileContent, (serverIP, serverPort))
