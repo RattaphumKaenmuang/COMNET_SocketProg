@@ -13,21 +13,33 @@ serverPort = args.serverPort
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((serverIP, serverPort))
+sock.settimeout(0.5)
 
 outputPath = "./output/"
 
 print(f"Server listening on {serverIP}:{serverPort}")
 
-while True:
-    fileName, addr = sock.recvfrom(1024)
-    fileName = fileName.decode('utf-8')
-    print(f"Receiving file: {fileName} from {addr}")
+try:
+    while True:
+        try:
+            fileName, addr = sock.recvfrom(1024)
+            fileName = fileName.decode('utf-8')
+            print(f"Receiving file: {fileName} from {addr}")
 
-    filePath = os.path.join(outputPath, fileName)
-    with open(filePath, 'wb') as file:
-        while True:
-            fileContent, addr = sock.recvfrom(1024)
-            if not fileContent:
-                break
-            file.write(fileContent)
-    print(f"File {fileName} received and saved.")
+            filePath = os.path.join(outputPath, fileName)
+            with open(filePath, 'wb') as file:
+                while True:
+                    fileContent, addr = sock.recvfrom(1024)
+                    if not fileContent:
+                        break
+                    file.write(fileContent)
+            print(f"File {fileName} received and saved.")
+        except socket.timeout:
+            pass
+        except KeyboardInterrupt:
+            print("Keyboard Interrupted")
+            break
+except KeyboardInterrupt:
+    print("Shutting Down...")
+finally:
+    sock.close()

@@ -35,3 +35,4 @@ for c in chunks:
     sock.sendto(c, (serverIP, serverPort))
 
 sock.sendto(b'', (serverIP, serverPort))
+print(f"Finished sending {fileName}")
