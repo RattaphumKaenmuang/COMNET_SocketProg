@@ -23,8 +23,11 @@ while True:
     fileName = fileName.decode('utf-8')
     print(f"Receiving file: {fileName} from {addr}")
 
-    fileContent, addr = sock.recvfrom(65535)
     filePath = os.path.join(outputPath, fileName)
     with open(filePath, 'wb') as file:
-        file.write(fileContent)
+        while True:
+            fileContent, addr = sock.recvfrom(1024)
+            if not fileContent:
+                break
+            file.write(fileContent)
     print(f"File {fileName} received and saved.")

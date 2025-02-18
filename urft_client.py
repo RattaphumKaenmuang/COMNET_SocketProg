@@ -2,6 +2,12 @@ import socket
 import argparse
 import os
 
+def splitChunks(fileContent, chunkSize):
+    chunks = []
+    for i in range(0, len(fileContent), chunkSize):
+        chunks.append(fileContent[i:i + chunkSize])
+    return chunks
+
 parser = argparse.ArgumentParser(description='URFT Client')
 parser.add_argument('filePath', type=str, nargs='?', default="The client didn't input shit lmao", help='Message to send')
 parser.add_argument('serverIP', type=str, help='Server IP address')
@@ -24,4 +30,8 @@ with open(filePath, 'rb') as file:
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.sendto(fileName.encode("utf-8"), (serverIP, serverPort))
-sock.sendto(fileContent, (serverIP, serverPort))
+chunks = splitChunks(fileContent, 1024)
+for c in chunks:
+    sock.sendto(c, (serverIP, serverPort))
+
+sock.sendto(b'', (serverIP, serverPort))
