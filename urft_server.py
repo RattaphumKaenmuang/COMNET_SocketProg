@@ -28,11 +28,14 @@ try:
 
             filePath = os.path.join(outputPath, fileName)
             with open(filePath, 'wb') as file:
+                segmentCount = 0
                 while True:
                     fileContent, addr = sock.recvfrom(1024)
                     if not fileContent:
                         break
                     file.write(fileContent)
+                    segmentCount += 1
+                    print(f"Segment: {segmentCount} received")
             print(f"File {fileName} received and saved.")
         except socket.timeout:
             pass
