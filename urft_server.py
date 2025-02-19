@@ -2,9 +2,9 @@ import socket
 import argparse
 import os
 
-parser = argparse.ArgumentParser(description='URFT Client')
-parser.add_argument('serverIP', type=str, help='Server IP address')
-parser.add_argument('serverPort', type=int, help='Server port number')
+parser = argparse.ArgumentParser(description='URFT Server')
+parser.add_argument('serverIP', type=str)
+parser.add_argument('serverPort', type=int)
 
 args = parser.parse_args()
 
