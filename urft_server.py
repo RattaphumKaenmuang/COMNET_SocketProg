@@ -30,10 +30,10 @@ try:
             with open(filePath, 'wb') as file:
                 segmentCount = 0
                 while True:
-                    fileContent, addr = sock.recvfrom(1024)
-                    if not fileContent:
+                    chunkContent, addr = sock.recvfrom(1024)
+                    if chunkContent == b'':
                         break
-                    file.write(fileContent)
+                    file.write(chunkContent)
                     segmentCount += 1
                     print(f"Segment: {segmentCount} received")
             print(f"File {fileName} received and saved.")
