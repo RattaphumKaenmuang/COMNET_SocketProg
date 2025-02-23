@@ -31,7 +31,10 @@ with open(filePath, 'rb') as file:
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.sendto(fileName.encode("utf-8"), (serverIP, serverPort))
 chunks = splitChunks(fileContent, 1024)
+i = 0
 for c in chunks:
+    i += 1
+    print(f"Sending chunk {i}")
     sock.sendto(c, (serverIP, serverPort))
 
 sock.sendto(b'', (serverIP, serverPort))

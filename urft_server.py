@@ -38,7 +38,8 @@ try:
                     print(f"Segment: {segmentCount} received")
             print(f"File {fileName} received and saved.")
         except socket.timeout:
-            print("Timeout...")
+            # print("Timeout...")
+            pass
         except KeyboardInterrupt:
             print("Keyboard Interrupted")
             break
