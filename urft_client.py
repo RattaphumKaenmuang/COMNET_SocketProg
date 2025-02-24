@@ -1,4 +1,4 @@
-import socket
+from classes import RDTClient
 import argparse
 import os
 
@@ -28,12 +28,5 @@ fileName = os.path.basename(filePath)
 with open(filePath, 'rb') as file:
     fileContent = file.read()
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.sendto(fileName.encode("utf-8"), (serverIP, serverPort))
-chunks = splitChunks(fileContent, 1024)
-for i, c in enumerate(chunks):
-    print(f"Chunk number: {i}")
-    sock.sendto(c, (serverIP, serverPort))
-
-sock.sendto(b'', (serverIP, serverPort))
-print(f"Finished sending {fileName}")
+client = RDTClient()
+client.shakeHand(serverIP, serverPort, fileName)
