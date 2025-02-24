@@ -54,39 +54,40 @@ class RDTClient(RDTEntity):
         super().__init__(self)
         self.pairedServer = None #(serverIP, serverPort)
 
+    def __getNewAckNum(self, increment):
+        return (self.ackNum + increment) % MAX_32BIT_NUM
+    
+    def __getNewSeqNum(self, increment):
+        return (self.seqNum + increment) % MAX_32BIT_NUM
+
     def __transmit(self, segment, serverIP, serverPort, maxRetries=MAX_RETRIES):
         segBytes = self._pack(segment)
-        try:
-            for _ in range(maxRetries):
-                try:
-                    self.yap_text("Sending SYN")
-                    self.yap_segment(segment)
+        for _ in range(maxRetries):
+            try:
+                self.yap_text("Sending SYN")
+                self.yap_segment(segment)
 
-                    self.sock.sendto(segBytes, (serverIP, serverPort))
+                self.sock.sendto(segBytes, (serverIP, serverPort))
 
-                    resp, addr = self.sock.recvfrom(BUFFER_SIZE)
-                    respSeg = self._unpack(resp)
+                ackBytes, addr = self.sock.recvfrom(BUFFER_SIZE)
+                ackSeg = self._unpack(ackBytes)
+                self.yap_segment(ackSeg, addr)
 
-                    self.yap_segment(respSeg, addr)
+                ackPayloadLen = len(ackSeg.payload)
+                expectedAckNum = self.__getNewAckNum(ackPayloadLen)
 
-                    respPayloadLen = len(respSeg.payload)
-
-                    if respSeg.ackNum == (self.ackNum + respPayloadLen) % MAX_32BIT_NUM:
-                        self.yap_text("CORRECT ACKNUM. TRANSMITTING COMPLETED.")
-                        return respSeg
-                    else:
-                        raise WrongAckNumException((self.ackNum + respPayloadLen) % MAX_32BIT_NUM, respSeg.ackNum)
-                except timeout:
-                    self.yap_text("RESPONSE TIMEOUT. Retransmitting...")
-                except WrongAckNumException as e:
-                    self.yap_text(f"WRONG ACKNUM ({e.actualAck} should be {e.expectedAck}; Diff = {e.actualAck - e.expectedAck}). Retransmitting...")
-                except KeyboardInterrupt:
-                    self.yap_text("KEYBOARD INTERRUPTED_IN")
-                    break
-
-        except KeyboardInterrupt:
-            self.yap_text(f"KEYBOARD INTERRUPTED")
-            return False
+                if ackSeg.ackNum == expectedAckNum:
+                    self.yap_text("CORRECT ACKNUM. TRANSMITTING COMPLETED.")
+                    return ackSeg
+                else:
+                    raise WrongAckNumException(expectedAckNum, ackSeg.ackNum)
+            except timeout:
+                self.yap_text("RESPONSE TIMEOUT. Retransmitting...")
+            except WrongAckNumException as e:
+                self.yap_text(f"WRONG ACKNUM ({e.actualAck} should be {e.expectedAck}; Diff = {e.actualAck - e.expectedAck}). Retransmitting...")
+            except KeyboardInterrupt:
+                self.yap_text("KEYBOARD INTERRUPTED_IN")
+                break
 
         return False
 
@@ -114,7 +115,7 @@ class RDTClient(RDTEntity):
 
         self.yap_text("HOLY SHIT HANDSHAKING COMPLETED")
         self.yap_text(f"Paired Server: {self.pairedServer}")
-        
+
         return True
 
 class RDTServer(RDTEntity):
