@@ -5,7 +5,7 @@ import struct
 
 class Segment:
     headerSize = 4 + 4 + 1
-    def __init__(self, seqNum, ackNum, flag, payload):
+    def __init__(self, seqNum, ackNum, flag, payload=''):
         self.seqNum = seqNum
         self.ackNum = ackNum
         self.flag = flag
@@ -14,97 +14,169 @@ class Segment:
 class RDTEntity:
     def __init__(self, willYap=YAP):
         self.willYap = willYap #Boolean
-        self.seqNum = randint(0, MAX_32BIT_NUM)
-        self.ackNum = randint(0, MAX_32BIT_NUM)
+        self.sock = socket(AF_INET, SOCK_DGRAM)
+        self.sock.settimeout(SOCKET_TIMEOUT)
 
-    def yap(self, txt):
-        if self.willYap: print(txt)
+        self.startSeqNum = randint(0, MAX_32BIT_NUM)
+        self.startAckNum = randint(0, MAX_32BIT_NUM)
+
+        self.seqNum = self.startSeqNum
+        self.ackNum = self.startAckNum
+
+    def yap_text(self, txt):
+        if self.willYap and txt is not None:
+            print(txt)
+
+    def yap_segment(self, segment, sender='Self'):
+        if self.willYap and segment is not None:
+            print(f"{str(sender)}: SEQ={segment.seqNum - self.startSeqNum} ACK={segment.ackNum - self.startAckNum} FLAG={segment.flag}")
+
 
     def _pack(self, segment):
         # [seqNum (4)][ackNum (4)][flag (1)][payload (varies)]; No payload length, calculate it yourself lmao.
         format = f"!2I B {len(segment.payload)}s" #uint, uint, uchar, n * uchar
-        return struct.pack(format, segment)
+        return struct.pack(format, segment.seqNum, segment.ackNum, segment.flag, segment.payload.encode())
     
     def _unpack(self, segBytes):
-        payloadLen = len(segBytes) - Segment.headerSize*8
+        payloadLen = len(segBytes) - Segment.headerSize
         format = f"!2I B {payloadLen}s"
         seqNum, ackNum, flag, payload = struct.unpack(format, segBytes)
-        return Segment(seqNum, ackNum, flag, payload)
+
+        # self.yap_text("===== UNPACKING RESULT =====")
+        # self.yap_text(f"payloadLen: {payloadLen}")
+        # self.yap_text(f"sN, aN, f, p: {seqNum}, {ackNum}, {flag}, {payload}")
+        # self.yap_text("============================")
+        
+        return Segment(seqNum, ackNum, flag, payload.decode())
     
 class RDTClient(RDTEntity):
     def __init__(self):
-        self.sock = socket(AF_INET, SOCK_DGRAM)
+        super().__init__(self)
         self.pairedServer = None #(serverIP, serverPort)
 
     def __transmit(self, segment, serverIP, serverPort, maxRetries=MAX_RETRIES):
         segBytes = self._pack(segment)
-        self.yap(f"{addr} : SEQ={self.seqNum - segment.seqNum} ACK={self.ackNum - segment.ackNum} FLAG={segment.flag}")
-        for _ in range(maxRetries):
-            try:
-                self.sock.sendto(segBytes, (serverIP, serverPort))
-                resp, addr = self.sock.recvfrom(BUFFER_SIZE)
-                respSeg = self._unpack(resp)
-                self.yap(f"{addr} : SEQ={self.seqNum - respSeg.seqNum} ACK={self.ackNum - respSeg.ackNum} FLAG={respSeg.flag}")
-                respPayloadLen = len(respSeg.payload)
+        try:
+            for _ in range(maxRetries):
+                try:
+                    self.yap_text("Sending SYN")
+                    self.yap_segment(segment)
 
-                if resp.ackNum == (self.seqNum + respPayloadLen) % MAX_32BIT_NUM:
-                    return respSeg
-                else:
-                    raise WrongAckNumException
-            except timeout:
-                self.yap(f"RESPONSE TIMEOUT. Retransmitting...")
-            except WrongAckNumException:
-                self.yap(f"WRONG ACKNUM. Retransmitting...")
+                    self.sock.sendto(segBytes, (serverIP, serverPort))
+
+                    resp, addr = self.sock.recvfrom(BUFFER_SIZE)
+                    respSeg = self._unpack(resp)
+
+                    self.yap_segment(respSeg, addr)
+
+                    respPayloadLen = len(respSeg.payload)
+
+                    if respSeg.ackNum == (self.ackNum + respPayloadLen) % MAX_32BIT_NUM:
+                        self.yap_text("CORRECT ACKNUM. TRANSMITTING COMPLETED.")
+                        return respSeg
+                    else:
+                        raise WrongAckNumException((self.ackNum + respPayloadLen) % MAX_32BIT_NUM, respSeg.ackNum)
+                except timeout:
+                    self.yap_text("RESPONSE TIMEOUT. Retransmitting...")
+                except WrongAckNumException as e:
+                    self.yap_text(f"WRONG ACKNUM ({e.actualAck} should be {e.expectedAck}; Diff = {e.actualAck - e.expectedAck}). Retransmitting...")
+                except KeyboardInterrupt:
+                    self.yap_text("KEYBOARD INTERRUPTED_IN")
+                    break
+
+        except KeyboardInterrupt:
+            self.yap_text(f"KEYBOARD INTERRUPTED")
+            return False
+
         return False
 
     def shakeHand(self, serverIP, serverPort, fileName):
         # Send SYN and wait for SYN_ACK
         synSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, flag=SYN, payload=fileName)
-        respSeg = self.__transmit(self, synSeg, serverIP, serverPort)
+        respSeg = self.__transmit(synSeg, serverIP, serverPort)
 
-        if not respSeg or respSeg.payload != fileName: return False #Maybe better implementations later.
-
-        self.pairedServer = (serverIP, serverPort)
+        if not respSeg or respSeg.payload != fileName:
+            self.yap_text("OOPS. SYN_ACK SEG WENT BAD.")
+            return False #Maybe better implementations later.
 
         # Increment params
         filenameLen = len(fileName)
         self.seqNum = (self.seqNum + filenameLen) % MAX_32BIT_NUM
         self.ackNum = (self.ackNum + filenameLen) % MAX_32BIT_NUM
 
+        # Send ACK
+        self.pairedServer = (serverIP, serverPort)
+        ackSeg = Segment(self.seqNum, self.ackNum, flag=ACK, payload='')
+        self.yap_segment(ackSeg)
+
+        ackSegBytes = self._pack(ackSeg)
+        self.sock.sendto(ackSegBytes, self.pairedServer)
+
+        self.yap_text("HOLY SHIT HANDSHAKING COMPLETED")
+        self.yap_text(f"Paired Server: {self.pairedServer}")
+        
         return True
 
 class RDTServer(RDTEntity):
     def __init__(self, ip, port):
-        self.sock = socket(AF_INET, SOCK_DGRAM)
+        super().__init__(self)
         self.sock.bind((ip, port))
-        self.sock.settimeout(SOCKET_TIMEOUT)
         self.pairedClient = None #(clientIP, clientPort)
 
     def extendHand(self):
         # Wait for SYN
-        synSegBytes, addr1 = self.sock.recvfrom(BUFFER_SIZE)
+        while True:
+            try:
+                synSegBytes, addr1 = self.sock.recvfrom(BUFFER_SIZE)
+                break
+            except timeout:
+                self.yap_text("Waiting for SYN.")
         
-        # Send SYN_ACK
+        # Align the params
         synSeg = self._unpack(synSegBytes)
-        synACKSeg = Segment(seqNum=synSeg.seqNum, ackNum=(synSeg.seqNum+1) % MAX_32BIT_NUM, flag=SYN_ACK, payload=synSeg.payload)
-        self.sock.sendto(synACKSeg, addr1)
+        self.startSeqNum = synSeg.seqNum
+        self.startAckNum = synSeg.ackNum
+        self.seqNum = self.startSeqNum
+        self.ackNum = self.startAckNum
+        self.yap_segment(synSeg, addr1)
+        self.yap_text(f"Realigned Params: startSeq={self.startSeqNum} startAck={self.startAckNum}")
 
-        # Wait for ACK
-        ackSegBytes, addr2 = self.sock.recvfrom(BUFFER_SIZE)
+        # Prepare SYN_ACK
+        synSegPayloadLen = len(synSeg.payload)
+        self.ackNum = self.ackNum + synSegPayloadLen
+        synAckSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, flag=SYN_ACK, payload=synSeg.payload)
+        self.yap_text("Sending SYN_ACK")
+
+        synAckSegBytes = self._pack(synAckSeg)
+        
+
+        # Send SYN_ACK and wait for ACK
+        for _ in range(MAX_RETRIES):
+            try:
+                self.sock.sendto(synAckSegBytes, addr1)
+                self.yap_segment(synAckSeg)
+                ackSegBytes, addr2 = self.sock.recvfrom(BUFFER_SIZE)
+                break
+            except timeout:
+                self.yap_text("Waiting for ACK.")
+
         ackSeg = self._unpack(ackSegBytes)
 
         sameADDR = addr1 == addr2
-        correctSeqNum = ackSeg.seqNum == ((synSeg.seqNum+1) % MAX_32BIT_NUM)
-        correctAckNum = ackSeg.ackNum == ((synSeg.ackNum+1) % MAX_32BIT_NUM)
+        correctSeqNum = ackSeg.seqNum == ((self.startSeqNum + synSegPayloadLen) % MAX_32BIT_NUM)
+        correctAckNum = ackSeg.ackNum == ((self.startAckNum + synSegPayloadLen) % MAX_32BIT_NUM)
 
         # Validate
         if not (sameADDR and correctSeqNum and correctAckNum): return False
 
-        self.seqNum = (synSeg.seqNum+1) % MAX_32BIT_NUM
-        self.ackNum = (synSeg.ackNum+1) % MAX_32BIT_NUM
+        self.startAckNum = (self.startAckNum + synSegPayloadLen) % MAX_32BIT_NUM
         self.pairedClient = addr1
+        self.yap_text("HOLY SHIT HANDSHAKING COMPLETED")
+        self.yap_text(f"Paired Client: {self.pairedClient}")
 
         return True
 
 class WrongAckNumException(Exception):
-    pass
+    def __init__(self, expectedAck, actualAck):
+        self.expectedAck = expectedAck
+        self.actualAck = actualAck
