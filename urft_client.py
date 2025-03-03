@@ -15,3 +15,5 @@ serverPort = args.serverPort
 
 client = RDTClient()
 connectionSuccess = client.connectTo((serverIP, serverPort))
+if connectionSuccess:
+    client.sendFile(filePath)

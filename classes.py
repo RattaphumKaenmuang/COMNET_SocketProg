@@ -127,7 +127,7 @@ class RDTClient(RDTEntity):
                         self._send(ackSeg)
                         self.handshakeInProgress = False
                         log(f"Handshaking Completed.")
-                        return
+                        return True
         
     def sendFile(self, filePath):
         fileName = os.path.basename(filePath)
@@ -173,5 +173,5 @@ class RDTServer(RDTEntity):
                             self.toACK.remove(ackSeg)
                             self.seqNum += 1
                         self.handshakeInProgress = False
-                        return
+                        return True
 
