@@ -1,12 +1,6 @@
-import socket
+from classes import *
 import argparse
 import os
-
-def splitChunks(fileContent, chunkSize):
-    chunks = []
-    for i in range(0, len(fileContent), chunkSize):
-        chunks.append(fileContent[i:i + chunkSize])
-    return chunks
 
 parser = argparse.ArgumentParser(description='URFT Client')
 parser.add_argument('filePath', type=str)
@@ -19,21 +13,5 @@ filePath = args.filePath
 serverIP = args.serverIP
 serverPort = args.serverPort
 
-if not os.path.isfile(filePath):
-    print(f"File {filePath} doesn't exist")
-    exit(1)
-
-fileName = os.path.basename(filePath)
-
-with open(filePath, 'rb') as file:
-    fileContent = file.read()
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.sendto(fileName.encode("utf-8"), (serverIP, serverPort))
-chunks = splitChunks(fileContent, 1024)
-for i, c in enumerate(chunks):
-    print(f"Chunk number: {i}")
-    sock.sendto(c, (serverIP, serverPort))
-
-sock.sendto(b'', (serverIP, serverPort))
-print(f"Finished sending {fileName}")
+client = RDTClient()
+client.connectTo((serverIP, serverPort))

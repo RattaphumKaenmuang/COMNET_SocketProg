@@ -31,6 +31,8 @@ class RDTEntity:
         self.sock.settimeout(SOCKET_TIMEOUT)
         self.pairedAddr = None  # (ip, port)
 
+        self.lock = threading.Lock()
+
         self.recv_thread = threading.Thread(target=self._receive)
         self.recv_thread.daemon = True
         self.recv_thread.start()
@@ -39,7 +41,6 @@ class RDTEntity:
         self.ack_thread.daemon = True
         self.ack_thread.start()
 
-        self.lock = threading.Lock()
 
     def _send(self, segment):
         segBytes = Segment.pack(segment)
