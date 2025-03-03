@@ -171,6 +171,19 @@ class RDTServer(RDTEntity):
                         with self.lock:
                             self.toACK.remove(ackSeg)
                             self.seqNum += 1
-                        self.handshakeInProgress = False
                         return True
+        
+    def receiveFile(self):
+        log("Waiting to receive file name...")
+        while True:
+            with self.lock:
+                fileNameSegment = next((s for s in self.toACK if s.payload and len(s.payload) > 0), None)
+            
+            if fileNameSegment:
+                log(f"Filename received: {fileNameSegment.payload.decode()}")
+                ackSeg = Segment(seqNum=self.seqNum, ackNum=fileNameSegment.seqNum + 1, payload=b'ACK')
+                self._send(ackSeg)
+
+                with self.lock:
+                    self.toACK.remove(fileNameSegment)
 

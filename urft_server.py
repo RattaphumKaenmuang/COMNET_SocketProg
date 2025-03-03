@@ -13,3 +13,5 @@ serverPort = args.serverPort
 
 server = RDTServer(serverIP, serverPort)
 connectionSuccess = server.waitForConnection()
+if connectionSuccess:
+    server.receiveFile()
