@@ -11,9 +11,10 @@ def log(txt):
 class Segment:
     headerFormat = "!2I"
     def __init__(self, seqNum, ackNum, payload):
-        self.seqNum = seqNum    #uint
-        self.ackNum = ackNum    #uint
-        self.payload = payload  #bytes
+        self.seqNum = seqNum                                #uint
+        self.ackNum = ackNum                                #uint
+        self.nextSeqNum = seqNum + len(payload.decode())    #uint
+        self.payload = payload                              #bytes
 
     def pack(self):
         return struct.pack(Segment.headerFormat, self.seqNum, self.ackNum) + self.payload
@@ -25,9 +26,9 @@ class Segment:
         return Segment(seqNum, ackNum, payload)
     
     def __str__(self):
-        shortPayload = self.payload[:8]
+        shortPayload = self.payload.decode()[:8]
         shortPayload = shortPayload if len(self.payload) <= 8 else shortPayload + "..."
-        return f"[seqNum={self.seqNum} ackNum={self.ackNum} payload={shortPayload}]"
+        return f"[seqNum={self.seqNum} nextSeqNum={self.nextSeqNum} ackNum={self.ackNum} payload='{shortPayload}']"
     
     def __len__(self):
         return len(self.payload.decode())
@@ -61,6 +62,7 @@ class RDTEntity:
     def _send(self, segment):
         segBytes = Segment.pack(segment)
         self.sock.sendto(segBytes, self.pairedAddr)
+        self.seqNum = segment.nextSeqNum
         log(f"Sending segment: {str(segment)}")
 
         if segment.payload and segment.payload not in [b"SYN", b"SYN-ACK", b"ACK"]:
@@ -117,15 +119,13 @@ class RDTClient(RDTEntity):
         while True:
             with self.lock:
                 for segment in self.toACK:
-                    if segment.payload == b'SYN-ACK' and segment.ackNum == self.seqNum + 1:
-                        log(f"SYN-ACK received.")
+                    if segment.payload == b'SYN-ACK' and segment.ackNum == synSeg.nextSeqNum+1:
                         self.toACK.remove(segment)
-                        self.seqNum += 1
-                        self.ackNum += 1
 
                         # Send final ACK
                         log(f"Sending handshake ACK.")
-                        ackSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=b'ACK')
+                        ackSeg = Segment(seqNum=self.seqNum, ackNum=segment.nextSeqNum+1, payload=b'ACK')
+                        self.ackNum = ackSeg.ackNum
                         self._send(ackSeg)
                         log(f"Params: seqNum={self.seqNum} ackNum={self.ackNum}")
                         log(f"Handshaking Completed.")
@@ -160,17 +160,16 @@ class RDTServer(RDTEntity):
                     self.toACK.remove(segment)
                 log(f"Client addr: {self.pairedAddr}")
 
-                self.ackNum += 1
-
                 # Send SYN-ACK
                 log("Sending SYN-ACK.")
-                synAckSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=b'SYN-ACK')
+                synAckSeg = Segment(seqNum=self.seqNum, ackNum=segment.nextSeqNum+1, payload=b'SYN-ACK')
+                self.ackNum = synAckSeg.ackNum
                 self._send(synAckSeg)
 
                 # Wait for final ACK
                 while True:
                     with self.lock:
-                        ackSeg = next((s for s in self.toACK if s.payload == b'ACK' and s.ackNum == self.seqNum + 1), None)
+                        ackSeg = next((s for s in self.toACK if s.payload == b'ACK' and s.ackNum == synAckSeg.nextSeqNum+1), None)
 
                     if ackSeg:
                         log(f"Handshake ACK received.")
