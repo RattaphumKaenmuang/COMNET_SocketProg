@@ -35,7 +35,7 @@ class RDTEntity:
         self.ackNum = 0
         self.unACK = []  # Sent but unACKed segments
         self.toACK = []  # Received but unACKed segments
-        self.handshakeInProgress = True
+        self.sendingFileContent = False
 
         self.sock = socket(AF_INET, SOCK_DGRAM)
         self.sock.settimeout(SOCKET_TIMEOUT)
@@ -93,7 +93,7 @@ class RDTEntity:
     def _process_toACK(self):
         while True:
             with self.lock:
-                if self.toACK and not self.handshakeInProgress:
+                if self.toACK and self.sendingFileContent:
                     segment = self.toACK.pop(0)
                     ackSegment = Segment(seqNum=self.seqNum, ackNum=segment.seqNum, payload=b'')
                     self._send(ackSegment)
@@ -125,7 +125,6 @@ class RDTClient(RDTEntity):
                         log(f"Sending handshake ACK.")
                         ackSeg = Segment(seqNum=self.seqNum, ackNum=segment.seqNum + 1, payload=b'ACK')
                         self._send(ackSeg)
-                        self.handshakeInProgress = False
                         log(f"Handshaking Completed.")
                         return True
         
