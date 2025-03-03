@@ -28,6 +28,9 @@ class Segment:
         shortPayload = self.payload[:8]
         shortPayload = shortPayload if len(self.payload) <= 8 else shortPayload + "..."
         return f"[seqNum={self.seqNum} ackNum={self.ackNum} payload={shortPayload}]"
+    
+    def __len__(self):
+        return len(self.payload.decode())
 
 class RDTEntity:
     def __init__(self):
@@ -98,8 +101,6 @@ class RDTEntity:
                     ackSegment = Segment(seqNum=self.seqNum, ackNum=segment.seqNum, payload=b'')
                     self._send(ackSegment)
 
-
-
 class RDTClient(RDTEntity):
     def __init__(self):
         super().__init__()
@@ -109,7 +110,7 @@ class RDTClient(RDTEntity):
         self.pairedAddr = addr
 
         # Send SYN
-        synSeg = Segment(seqNum=0, ackNum=0, payload=b'SYN')
+        synSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=b'SYN')
         self._send(synSeg)
 
         # Wait for SYN-ACK
@@ -120,12 +121,15 @@ class RDTClient(RDTEntity):
                         log(f"SYN-ACK received.")
                         self.toACK.remove(segment)
                         self.seqNum += 1
+                        self.ackNum += 1
 
                         # Send final ACK
                         log(f"Sending handshake ACK.")
-                        ackSeg = Segment(seqNum=self.seqNum, ackNum=segment.seqNum + 1, payload=b'ACK')
+                        ackSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=b'ACK')
                         self._send(ackSeg)
+                        log(f"Params: seqNum={self.seqNum} ackNum={self.ackNum}")
                         log(f"Handshaking Completed.")
+                        log(f"="*20)
                         return True
         
     def sendFile(self, filePath):
@@ -154,11 +158,13 @@ class RDTServer(RDTEntity):
                 with self.lock:
                     self.pairedAddr = self.pairedAddr or segment.pairedAddr
                     self.toACK.remove(segment)
-                    log(f"Client addr: {self.pairedAddr}")
+                log(f"Client addr: {self.pairedAddr}")
+
+                self.ackNum += 1
 
                 # Send SYN-ACK
                 log("Sending SYN-ACK.")
-                synAckSeg = Segment(seqNum=self.seqNum, ackNum=segment.seqNum + 1, payload=b'SYN-ACK')
+                synAckSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=b'SYN-ACK')
                 self._send(synAckSeg)
 
                 # Wait for final ACK
@@ -171,6 +177,9 @@ class RDTServer(RDTEntity):
                         with self.lock:
                             self.toACK.remove(ackSeg)
                             self.seqNum += 1
+                        log(f"Params: seqNum={self.seqNum} ackNum={self.ackNum}")
+                        log(f"Handshaking Completed.")
+                        log(f"="*20)
                         return True
         
     def receiveFile(self):
