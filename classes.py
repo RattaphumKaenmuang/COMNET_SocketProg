@@ -183,7 +183,6 @@ class RDTServer(RDTEntity):
                         log(f"Handshake ACK received.")
                         with self.lock:
                             self.toACK.remove(ackSeg)
-                            self.seqNum += 1
                         log(f"Params: seqNum={self.seqNum} ackNum={self.ackNum}")
                         log(f"Handshaking Completed.")
                         log(f"="*20)
