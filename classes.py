@@ -4,6 +4,10 @@ import os
 import struct
 import threading
 
+def log(txt):
+    if DEBUG:
+        print(txt)
+
 class Segment:
     headerFormat = "!2I"
     def __init__(self, seqNum, ackNum, payload):
