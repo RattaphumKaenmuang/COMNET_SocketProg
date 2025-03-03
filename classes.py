@@ -128,6 +128,15 @@ class RDTClient(RDTEntity):
                         self.handshakeInProgress = False
                         log(f"Handshaking Completed.")
                         return
+        
+    def sendFile(self, filePath):
+        fileName = os.path.basename(filePath)
+        fileNameSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=fileName.encode())
+
+        log(f"filePath={filePath}")
+        log(f"fileName={fileName}")
+
+        self._send(fileNameSeg)
 
 class RDTServer(RDTEntity):
     def __init__(self, ip, port):
