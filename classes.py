@@ -13,7 +13,7 @@ class Segment:
     def __init__(self, seqNum, ackNum, payload):
         self.seqNum = seqNum                                #uint
         self.ackNum = ackNum                                #uint
-        self.nextSeqNum = seqNum + len(payload.decode())    #uint
+        self.nextSeqNum = seqNum + len(payload)             #uint
         self.payload = payload                              #bytes
 
     def pack(self):
@@ -26,7 +26,7 @@ class Segment:
         return Segment(seqNum, ackNum, payload)
     
     def __str__(self):
-        shortPayload = self.payload.decode()[:8]
+        shortPayload = self.payload[:8].hex()
         shortPayload = shortPayload if len(self.payload) <= 8 else shortPayload + "..."
         return f"[seqNum={self.seqNum} nextSeqNum={self.nextSeqNum} ackNum={self.ackNum} payload='{shortPayload}']"
     
@@ -39,25 +39,19 @@ class RDTEntity:
         self.ackNum = 0
         self.unACK = []  # Sent but unACKed segments
         self.toACK = []  # Received but unACKed segments
-        self.sendingFileContent = False
 
         self.sock = socket(AF_INET, SOCK_DGRAM)
         self.sock.settimeout(SOCKET_TIMEOUT)
         self.pairedAddr = None  # (ip, port)
 
-        self.lock = threading.Lock()
-        log(f"Thread Lock created: {self.lock}")
+        self.lock = threading.RLock()
 
         self.recv_thread = threading.Thread(target=self._receive)
         self.recv_thread.daemon = True
         self.recv_thread.start()
-        log(f"recv_thread created: {self.recv_thread}")
 
-        self.ack_thread = threading.Thread(target=self._process_toACK)
-        self.ack_thread.daemon = True
-        self.ack_thread.start()
-        log(f"ack_thread created: {self.ack_thread}")
-
+        self.finished = False
+        self.finSent = False
 
     def _send(self, segment):
         segBytes = Segment.pack(segment)
@@ -65,7 +59,7 @@ class RDTEntity:
         self.seqNum = segment.nextSeqNum
         log(f"--> {str(segment)}")
 
-        if segment.payload and segment.payload not in [b"SYN", b"SYN-ACK", b"ACK"]:
+        if segment.payload and segment.payload not in [b"SYN", b"SYN-ACK", b"ACK", b"FIN", b"FIN-ACK"]:
             with self.lock:
                 self.unACK.append(segment)
                 log(f"Is a payload segment. Added to unACK.")
@@ -84,24 +78,19 @@ class RDTEntity:
 
                 with self.lock:
                     # Remove matched segment from unACK list if it's an ACK
-                    self.unACK = [s for s in self.unACK if s.seqNum != segment.ackNum]
+                    self.unACK = [s for s in self.unACK if s.nextSeqNum + 1 != segment.ackNum]
 
                     # Buffer received data
                     if segment.payload:
                         self.toACK.append(segment)
 
+                    if segment.payload == b'FIN-ACK':
+                        self.finished = True
+
             except timeout:
                 continue
             except Exception as e:
                 print(f"Receive thread error: {e}")
-
-    def _process_toACK(self):
-        while True:
-            with self.lock:
-                if self.toACK and self.sendingFileContent:
-                    segment = self.toACK.pop(0)
-                    ackSegment = Segment(seqNum=self.seqNum, ackNum=segment.nextSeqNum+1, payload=b'')
-                    self._send(ackSegment)
 
 class RDTClient(RDTEntity):
     def __init__(self):
@@ -123,7 +112,6 @@ class RDTClient(RDTEntity):
                         self.toACK.remove(segment)
 
                         # Send final ACK
-                        log(f"Sending handshake ACK.")
                         ackSeg = Segment(seqNum=self.seqNum, ackNum=segment.nextSeqNum+1, payload=b'ACK')
                         self.ackNum = ackSeg.ackNum
                         self._send(ackSeg)
@@ -131,7 +119,14 @@ class RDTClient(RDTEntity):
                         log(f"Handshaking Completed.")
                         log(f"="*20)
                         return True
-        
+    
+    def _fragment(self, fileContent, fragmentSize=FRAGMENT_SIZE):
+        fragments = []
+        contentSize = len(fileContent)
+        for i in range(0, contentSize, fragmentSize):
+            fragments.append(fileContent[i:i+fragmentSize])
+        return fragments
+
     def sendFile(self, filePath):
         fileName = os.path.basename(filePath)
         fileNameSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=fileName.encode())
@@ -142,18 +137,57 @@ class RDTClient(RDTEntity):
         self._send(fileNameSeg)
         
         while True:
-            fileNameAck = next((s for s in self.toACK if s.payload and s.payload==b"ACK"), None)
+            fileNameAck = next((s for s in self.toACK if s.payload==b"ACK"), None)
 
             if fileNameAck:
                 log(f"File name exchange completed. Starting content transmission...")
                 self.toACK.remove(fileNameAck)
-                self.sendingFileContent = True
+                break
+        
+        with open(filePath, 'rb') as file:
+            fileContent = file.read()
+        
+        fragments = self._fragment(fileContent)
+
+        clusterSize = 20
+        offset = 0
+        while not self.finished:
+            if len(self.unACK) == 0:
+                upperRange = min(offset + clusterSize, len(fragments))
+                for i in range(offset, upperRange):
+                    segment = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=fragments[i])
+                    self._send(segment)
+                offset += clusterSize
+
+                if offset >= len(fragments) and not self.unACK and not self.finSent:
+                    finSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=b'FIN')
+                    self._send(finSeg)
+                    self.finSent = True
+
+        log("FIN confirmed on client side, awaiting server FIN...")
+
+        while True:
+            serverFinSeg = next((s for s in self.toACK if s.payload==b'FIN'), None)
+            if serverFinSeg:
+                finAckSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=b'FIN-ACK')
+                self._send(finAckSeg)
+                break
+        
+        log("Finished Terminating.")
 
 class RDTServer(RDTEntity):
     def __init__(self, ip, port):
         super().__init__()
         self.addr = (ip, port)
         self.sock.bind(self.addr)
+
+        self.sendingFileContent = False
+
+        self.ack_thread = threading.Thread(target=self._process_toACK)
+        self.ack_thread.daemon = True
+        self.ack_thread.start()
+
+        self.contentBuffer = []
 
     def waitForConnection(self):
         log(f"Waiting for connection at {self.addr}...")
@@ -162,14 +196,12 @@ class RDTServer(RDTEntity):
                 segment = next((s for s in self.toACK if s.payload == b'SYN'), None)
 
             if segment:
-                log("SYN sent from client found.")
                 with self.lock:
                     self.pairedAddr = self.pairedAddr or segment.pairedAddr
                     self.toACK.remove(segment)
                 log(f"Client addr: {self.pairedAddr}")
 
                 # Send SYN-ACK
-                log("Sending SYN-ACK.")
                 synAckSeg = Segment(seqNum=self.seqNum, ackNum=segment.nextSeqNum+1, payload=b'SYN-ACK')
                 self.ackNum = synAckSeg.ackNum
                 self._send(synAckSeg)
@@ -180,7 +212,6 @@ class RDTServer(RDTEntity):
                         ackSeg = next((s for s in self.toACK if s.payload == b'ACK' and s.ackNum == synAckSeg.nextSeqNum+1), None)
 
                     if ackSeg:
-                        log(f"Handshake ACK received.")
                         with self.lock:
                             self.toACK.remove(ackSeg)
                         log(f"Params: seqNum={self.seqNum} ackNum={self.ackNum}")
@@ -190,18 +221,48 @@ class RDTServer(RDTEntity):
         
     def receiveFile(self):
         log("Waiting to receive file name...")
+        fileName = None
         while True:
             with self.lock:
                 fileNameSegment = next((s for s in self.toACK if s.payload and len(s.payload) > 0), None)
             
             if fileNameSegment:
                 log(f"Filename received: {fileNameSegment.payload.decode()}")
-                ackSeg = Segment(seqNum=self.seqNum, ackNum=fileNameSegment.seqNum+1, payload=b'ACK')
+                ackSeg = Segment(seqNum=self.seqNum, ackNum=fileNameSegment.nextSeqNum+1, payload=b'ACK')
                 self._send(ackSeg)
+
+                fileName = fileNameSegment.payload.decode()
 
                 with self.lock:
                     self.toACK.remove(fileNameSegment)
 
                 self.sendingFileContent = True
                 log("File name exchange completed. Waiting for content transmission...")
-
+                break
+        
+        outputPath = os.path.join(OUTPUT_PATH, fileName)
+        with open(outputPath, 'wb') as file:
+            while not self.finished:
+                with self.lock:
+                    if self.contentBuffer:
+                        self.contentBuffer.sort(key=lambda x: x.seqNum)
+                        segment = self.contentBuffer.pop(0)
+                        log(f"Writing {segment.payload[:8] + b'...'} into {outputPath}")
+                        file.write(segment.payload)
+            log("Finished Receiving")
+            file.close()
+    
+    def _process_toACK(self):
+        while not self.finished:
+            with self.lock:
+                if self.toACK and self.sendingFileContent:
+                    segment = self.toACK.pop(0)
+                    if segment.payload == b'FIN' or segment.payload == b'FIN-ACK':
+                        finAckSeg = Segment(seqNum=self.seqNum, ackNum=segment.nextSeqNum+1, payload=b'FIN-ACK')
+                        self._send(finAckSeg)
+                        finSeg = Segment(seqNum=self.seqNum, ackNum=self.ackNum, payload=b'FIN')
+                        self._send(finSeg)
+                    else:
+                        ackSeg = Segment(seqNum=self.seqNum, ackNum=segment.nextSeqNum+1, payload=b'')
+                        self.contentBuffer.append(segment)
+                        self._send(ackSeg)
