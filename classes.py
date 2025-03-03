@@ -63,7 +63,7 @@ class RDTEntity:
         segBytes = Segment.pack(segment)
         self.sock.sendto(segBytes, self.pairedAddr)
         self.seqNum = segment.nextSeqNum
-        log(f"Sending segment: {str(segment)}")
+        log(f"--> {str(segment)}")
 
         if segment.payload and segment.payload not in [b"SYN", b"SYN-ACK", b"ACK"]:
             with self.lock:
@@ -80,7 +80,7 @@ class RDTEntity:
                     continue
 
                 segment = Segment.unpack(data)
-                log(f"Receiving segment: {str(segment)}")
+                log(f"<-- {str(segment)}")
 
                 with self.lock:
                     # Remove matched segment from unACK list if it's an ACK
@@ -100,7 +100,7 @@ class RDTEntity:
             with self.lock:
                 if self.toACK and self.sendingFileContent:
                     segment = self.toACK.pop(0)
-                    ackSegment = Segment(seqNum=self.seqNum, ackNum=segment.seqNum, payload=b'')
+                    ackSegment = Segment(seqNum=self.seqNum, ackNum=segment.nextSeqNum+1, payload=b'')
                     self._send(ackSegment)
 
 class RDTClient(RDTEntity):
@@ -140,6 +140,14 @@ class RDTClient(RDTEntity):
         log(f"fileName={fileName}")
 
         self._send(fileNameSeg)
+        
+        while True:
+            fileNameAck = next((s for s in self.toACK if s.payload and s.payload==b"ACK"), None)
+
+            if fileNameAck:
+                log(f"File name exchange completed. Starting content transmission...")
+                self.toACK.remove(fileNameAck)
+                self.sendingFileContent = True
 
 class RDTServer(RDTEntity):
     def __init__(self, ip, port):
@@ -189,9 +197,12 @@ class RDTServer(RDTEntity):
             
             if fileNameSegment:
                 log(f"Filename received: {fileNameSegment.payload.decode()}")
-                ackSeg = Segment(seqNum=self.seqNum, ackNum=fileNameSegment.seqNum + 1, payload=b'ACK')
+                ackSeg = Segment(seqNum=self.seqNum, ackNum=fileNameSegment.seqNum+1, payload=b'ACK')
                 self._send(ackSeg)
 
                 with self.lock:
                     self.toACK.remove(fileNameSegment)
+
+                self.sendingFileContent = True
+                log("File name exchange completed. Waiting for content transmission...")
 
