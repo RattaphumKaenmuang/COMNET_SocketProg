@@ -12,4 +12,4 @@ serverIP = args.serverIP
 serverPort = args.serverPort
 
 server = RDTServer(serverIP, serverPort)
-server.waitForConnection()
+connectionSuccess = server.waitForConnection()

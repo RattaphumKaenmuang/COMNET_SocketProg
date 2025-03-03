@@ -14,4 +14,4 @@ serverIP = args.serverIP
 serverPort = args.serverPort
 
 client = RDTClient()
-client.connectTo((serverIP, serverPort))
+connectionSuccess = client.connectTo((serverIP, serverPort))
